@@ -1,0 +1,60 @@
+= decadentsoup's Virtual Vectorscope
+
+This is a sort of audio visualizer modeled after a vectorscope, which is a type of oscilloscope.
+It samples stereo audio from a PulseAudio sink and plots dots in the window, regularly refreshing the screen.
+The left channel is represented on the X axis and the right channel on the Y axis.
+
+Vectorscopes provide an interesting visualization because they show the relationship between both channels in a stereo signal.
+When given a mono signal, you will get a straight line at all times that is not nearly as interesting.
+As such, this program is best for visualizing stereo audio like music, and not for mono audio like most microphone input.
+Your mileage may vary.
+
+The output from this program is more pixel-y than line-y because when I wrote this I thought it looked cool that way.
+In future updates I may make it look more like an actual vectorscope, with an option to go back to the original look.
+
+== Future Directions
+
+* Different skins, including one that looks more like a real CRT vectorscope.
+* Provide a way to change the audio sink dynamically.
+  Note: currently you can dynamically change it from programs like pavucontrol.
+* Port it from PulseAudio to other audio services, like OpenBSD's sndiod
+* Provide `--input`/`--output` as a shortcut to specify whether we want the default input or output sink.
+
+== Picking a PulseAudio Sink
+
+To list potential PulseAudio sinks, run:
+
+[listing]
+$ pacmd list-sources | sed -n 's/name: <\(.*\)>/\1/p'
+
+Which on my computer, for instance, outputs:
+
+[listing]
+alsa_input.usb-BRANDNAME_MICROPHONE.analog-stereo
+alsa_output.usb-BRANDNAME_HEADPHONE.analog-stereo.monitor
+alsa_input.usb-BRANDNAME_HEADPHONE.analog-stereo
+alsa_output.pci-0000_00_1b.0.iec958-stereo.monitor
+alsa_input.pci-0000_00_1b.0.analog-stereo
+alsa_output.pci-0000_01_00.1.hdmi-stereo.monitor
+
+In reality, on my machine this is indented somewhat and various actual brands are shown.
+
+These are, in order, a USB microphone, and USB headset adapter, and the motherboard's audio card.
+Pick the one you want and put it as the first (and only) argument to the program and you will be set!
+(If you are not set, file an issue in the tracker.)
+
+== Copyright, License, and Warranty
+
+Copyright (C) 2018 Megan Ruggiero. All rights reserved.
+
+Permission to use, copy, modify, and distribute this software for any
+purpose with or without fee is hereby granted, provided that the above
+copyright notice and this permission notice appear in all copies.
+
+THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES
+WITH REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF
+MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR
+ANY SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES
+WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN
+ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
+OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
