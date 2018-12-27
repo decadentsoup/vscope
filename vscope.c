@@ -46,11 +46,13 @@ static const char HELP_NOTICE[] =
 "  --version   display the version of this program\n"
 "  --geometry  set window size to WIDTHxHEIGHT, position to +X+Y, or both to\n"
 "              WIDTHxHEIGHT+X+Y; for negative positions, use - in place of +\n"
+"  --opacity   set window opacity to somewhere from 0.0 to 1.0\n"
 "\n"
 "Report bugs to: <https://github.com/decadentsoup/vscope/issues>\n"
 "Vectorscope home page: <https://github.com/decadentsoup/vscope>";
 
 static struct { int x, y, w, h; } geometry = {SDL_WINDOWPOS_UNDEFINED, SDL_WINDOWPOS_UNDEFINED, DEFAULT_WIDTH, DEFAULT_HEIGHT};
+static float opacity = 1;
 static const char *sink;
 static SDL_Window *window;
 static SDL_GLContext context;
@@ -83,6 +85,9 @@ main(int argc, char **argv)
 
 	if (!(window = SDL_CreateWindow("Vectorscope", geometry.x, geometry.y, geometry.w, geometry.h, SDL_WINDOW_OPENGL|SDL_WINDOW_RESIZABLE)))
 		errx(EXIT_FAILURE, "failed to create window: %s", SDL_GetError());
+
+	if (SDL_SetWindowOpacity(window, opacity))
+		warnx("failed to set window opacity: %s", SDL_GetError());
 
 	if (!(context = SDL_GL_CreateContext(window)))
 		errx(EXIT_FAILURE, "failed to create context: %s", SDL_GetError());
@@ -130,6 +135,7 @@ parse_args(int argc, char **argv)
 		{"help", no_argument, 0, 0},
 		{"version", no_argument, 0, 0},
 		{"geometry", required_argument, 0, 0},
+		{"opacity", required_argument, 0, 0},
 		{0, 0, 0, 0}
 	};
 
@@ -158,6 +164,14 @@ parse_args(int argc, char **argv)
 					geometry.h = DEFAULT_HEIGHT;
 				} else {
 					warnx("invalid geometry argument (see --help)");
+					fail = true;
+				}
+				break;
+			case 3:
+				if (sscanf(optarg, "%f", &opacity) == 1) {
+					// nothing more to do
+				} else {
+					warnx("invalid window opacity (see --help)");
 					fail = true;
 				}
 				break;
