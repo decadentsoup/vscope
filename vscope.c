@@ -163,7 +163,7 @@ parse_args(int argc, char **argv)
 					geometry.w = DEFAULT_WIDTH;
 					geometry.h = DEFAULT_HEIGHT;
 				} else {
-					warnx("invalid geometry argument (see --help)");
+					warnx("invalid geometry argument");
 					fail = true;
 				}
 				break;
@@ -171,7 +171,7 @@ parse_args(int argc, char **argv)
 				if (sscanf(optarg, "%f", &opacity) == 1) {
 					// nothing more to do
 				} else {
-					warnx("invalid window opacity (see --help)");
+					warnx("invalid window opacity");
 					fail = true;
 				}
 				break;
