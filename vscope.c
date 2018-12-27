@@ -74,7 +74,7 @@ main(int argc, char **argv)
 	if (SDL_Init(SDL_INIT_VIDEO) < 0)
 		errx(EXIT_FAILURE, "failed to initialize SDL: %s", SDL_GetError());
 
-	if (!(window = SDL_CreateWindow("Vectorscope", SDL_WINDOWPOS_UNDEFINED, SDL_WINDOWPOS_UNDEFINED, 800, 800, SDL_WINDOW_OPENGL)))
+	if (!(window = SDL_CreateWindow("Vectorscope", SDL_WINDOWPOS_UNDEFINED, SDL_WINDOWPOS_UNDEFINED, 800, 800, SDL_WINDOW_OPENGL|SDL_WINDOW_RESIZABLE)))
 		errx(EXIT_FAILURE, "failed to create window: %s", SDL_GetError());
 
 	if (!(context = SDL_GL_CreateContext(window)))
@@ -102,6 +102,8 @@ main(int argc, char **argv)
 				run = false;
 				pthread_join(thread, NULL);
 				return 0;
+			} else if (event.type == SDL_WINDOWEVENT && event.window.event == SDL_WINDOWEVENT_RESIZED) {
+				glViewport(0, 0, event.window.data1, event.window.data2);
 			}
 	}
 }
