@@ -34,16 +34,23 @@
 #endif
 
 #define BUFFER_SIZE 1024
+#define DEFAULT_WIDTH 480
+#define DEFAULT_HEIGHT 480
 
 static const char HELP_NOTICE[] =
 "Displays a vectorscope based on audio from the specified PulseAudio sink.\n"
-"If no sink is specified, the default sink will be used.\n\n"
+"If no sink is specified, the default sink will be used.\n"
+"\n"
 "Options:\n"
-"  --help     display this help message\n"
-"  --version  display the version of this program\n\n"
+"  --help      display this help message\n"
+"  --version   display the version of this program\n"
+"  --geometry  set window size to WIDTHxHEIGHT, position to +X+Y, or both to\n"
+"              WIDTHxHEIGHT+X+Y; for negative positions, use - in place of +\n"
+"\n"
 "Report bugs to: <https://github.com/decadentsoup/vscope/issues>\n"
 "Vectorscope home page: <https://github.com/decadentsoup/vscope>";
 
+static struct { int x, y, w, h; } geometry = {SDL_WINDOWPOS_UNDEFINED, SDL_WINDOWPOS_UNDEFINED, DEFAULT_WIDTH, DEFAULT_HEIGHT};
 static const char *sink;
 static SDL_Window *window;
 static SDL_GLContext context;
@@ -74,7 +81,7 @@ main(int argc, char **argv)
 	if (SDL_Init(SDL_INIT_VIDEO) < 0)
 		errx(EXIT_FAILURE, "failed to initialize SDL: %s", SDL_GetError());
 
-	if (!(window = SDL_CreateWindow("Vectorscope", SDL_WINDOWPOS_UNDEFINED, SDL_WINDOWPOS_UNDEFINED, 800, 800, SDL_WINDOW_OPENGL|SDL_WINDOW_RESIZABLE)))
+	if (!(window = SDL_CreateWindow("Vectorscope", geometry.x, geometry.y, geometry.w, geometry.h, SDL_WINDOW_OPENGL|SDL_WINDOW_RESIZABLE)))
 		errx(EXIT_FAILURE, "failed to create window: %s", SDL_GetError());
 
 	if (!(context = SDL_GL_CreateContext(window)))
@@ -122,6 +129,7 @@ parse_args(int argc, char **argv)
 	static const struct option options[] = {
 		{"help", no_argument, 0, 0},
 		{"version", no_argument, 0, 0},
+		{"geometry", required_argument, 0, 0},
 		{0, 0, 0, 0}
 	};
 
@@ -131,13 +139,28 @@ parse_args(int argc, char **argv)
 	for (fail = false, x = 0; x != -1;) {
 		x = getopt_long(argc, argv, "", options, &option_index);
 		if (x == 0) {
-			if (option_index) {
-				puts("Vectorscope " VERSION);
-				exit(0);
-			} else {
+			switch (option_index) {
+			case 0:
 				printf("Usage: %s [sink]\n\n", basename(argv[0]));
 				puts(HELP_NOTICE);
 				exit(0);
+			case 1:
+				puts("Vectorscope " VERSION);
+				exit(0);
+			case 2:
+				if (sscanf(optarg, "%ix%i%i%i", &geometry.w, &geometry.h, &geometry.x, &geometry.y) == 4) {
+					// nothing more to do
+				} else if (sscanf(optarg, "%ix%i", &geometry.w, &geometry.h) == 2) {
+					geometry.x = SDL_WINDOWPOS_UNDEFINED;
+					geometry.y = SDL_WINDOWPOS_UNDEFINED;
+				} else if (sscanf(optarg, "%i%i", &geometry.x, &geometry.y) == 2) {
+					geometry.w = DEFAULT_WIDTH;
+					geometry.h = DEFAULT_HEIGHT;
+				} else {
+					warnx("invalid geometry argument (see --help)");
+					fail = true;
+				}
+				break;
 			}
 		} else if (x == '?') {
 			fail = true;
