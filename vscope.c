@@ -16,12 +16,10 @@
 #include <errno.h>
 #include <getopt.h>
 #include <libgen.h>
-#include <pthread.h>
 #include <stdbool.h>
 #include <stdlib.h>
 
-#include <pulse/error.h>
-#include <pulse/simple.h>
+#include <pulse/pulseaudio.h>
 
 #include <SDL.h>
 
@@ -36,6 +34,9 @@
 #define BUFFER_SIZE 1024
 #define DEFAULT_WIDTH 480
 #define DEFAULT_HEIGHT 480
+
+#define errpax(message) (errx(EXIT_FAILURE, "[pulse] %s", message))
+#define errpa(message) (errx(EXIT_FAILURE, "[pulse] %s: %s", message, pa_strerror(pa_context_errno(pa.context))))
 
 static const char HELP_NOTICE[] =
 "Displays a vectorscope based on audio from the specified PulseAudio sink.\n"
@@ -53,16 +54,25 @@ static const char HELP_NOTICE[] =
 
 static struct { int x, y, w, h; } geometry = {SDL_WINDOWPOS_UNDEFINED, SDL_WINDOWPOS_UNDEFINED, DEFAULT_WIDTH, DEFAULT_HEIGHT};
 static float opacity = 1;
-static const char *sink;
+
+static struct {
+	const char *sink;
+	pa_mainloop *mainloop;
+	pa_context *context;
+	pa_stream *stream;
+} pa;
+
 static SDL_Window *window;
 static SDL_GLContext context;
-static pthread_t thread;
+
 static int16_t buffer[BUFFER_SIZE];
-static bool run = true;
 
 static void handle_exit(void);
 static void parse_args(int, char **);
-static void *sample(void *);
+static void init_pulse(void);
+static void handle_context_state(pa_context *, void *);
+static void handle_stream_state(pa_stream *, void *);
+static void handle_stream_read(pa_stream *, size_t, void *);
 
 int
 main(int argc, char **argv)
@@ -74,9 +84,10 @@ main(int argc, char **argv)
 		err(EXIT_FAILURE, "failed to register exit callback");
 
 	parse_args(argc, argv);
+	init_pulse();
 
-	if (sink)
-		warnx("using sink %s", sink);
+	if (pa.sink)
+		warnx("using sink %s", pa.sink);
 	else
 		warnx("using default sink");
 
@@ -92,12 +103,12 @@ main(int argc, char **argv)
 	if (!(context = SDL_GL_CreateContext(window)))
 		errx(EXIT_FAILURE, "failed to create context: %s", SDL_GetError());
 
-	if ((errno = pthread_create(&thread, NULL, sample, NULL)))
-		err(EXIT_FAILURE, "failed to create sampling thread");
-
 	last_time = 0;
 
 	for (;;) {
+		if (pa_mainloop_iterate(pa.mainloop, false, NULL) < 0)
+			errpax("failed to iterate mainloop");
+
 		if ((i = SDL_GetTicks()) > last_time + 16) {
 			SDL_GL_SwapWindow(window);
 			glClear(GL_COLOR_BUFFER_BIT);
@@ -110,13 +121,10 @@ main(int argc, char **argv)
 		glEnd();
 
 		while (SDL_PollEvent(&event))
-			if (event.type == SDL_QUIT) {
-				run = false;
-				pthread_join(thread, NULL);
+			if (event.type == SDL_QUIT)
 				return 0;
-			} else if (event.type == SDL_WINDOWEVENT && event.window.event == SDL_WINDOWEVENT_RESIZED) {
+			else if (event.type == SDL_WINDOWEVENT && event.window.event == SDL_WINDOWEVENT_RESIZED)
 				glViewport(0, 0, event.window.data1, event.window.data2);
-			}
 	}
 }
 
@@ -126,6 +134,17 @@ handle_exit()
 	SDL_GL_DeleteContext(context);
 	SDL_DestroyWindow(window);
 	SDL_Quit();
+
+	if (pa.stream)
+		pa_stream_unref(pa.stream);
+
+	if (pa.context) {
+		pa_context_disconnect(pa.context);
+		pa_context_unref(pa.context);
+	}
+
+	if (pa.mainloop)
+		pa_mainloop_free(pa.mainloop);
 }
 
 static void
@@ -183,7 +202,7 @@ parse_args(int argc, char **argv)
 
 	optopt = argc - optind;
 	if (optopt == 1) {
-		sink = argv[optind];
+		pa.sink = argv[optind];
 	} else if (optopt > 0) {
 		warnx("too many arguments");
 		fail = true;
@@ -193,49 +212,85 @@ parse_args(int argc, char **argv)
 		errx(EXIT_FAILURE, "see --help for more information");
 }
 
-static void *
-sample(void *argument UNUSED)
+static void
+init_pulse()
 {
-	static const pa_sample_spec sample_specification = {
+	pa_mainloop_api *api;
+
+	if (!(pa.mainloop = pa_mainloop_new()))
+		errpax("failed to create mainloop");
+
+	api = pa_mainloop_get_api(pa.mainloop);
+
+	if (!(pa.context = pa_context_new(api, "Vectorscope")))
+		errpax("failed to create context");
+
+	pa_context_set_state_callback(pa.context, handle_context_state, NULL);
+
+	if (pa_context_connect(pa.context, NULL, 0, NULL) < 0)
+		errpa("failed to connect");
+}
+
+static void
+handle_context_state(pa_context *ctx, void *userdata UNUSED)
+{
+	static const pa_sample_spec ss = {
 		.format = PA_SAMPLE_S16NE,
 		.channels = 2,
 		.rate = 44100
 	};
 
-	static const pa_buffer_attr buffer_attributes = {
-		.fragsize = BUFFER_SIZE / 2,
-		.maxlength = BUFFER_SIZE
+	static const pa_buffer_attr ba = {
+		.maxlength = BUFFER_SIZE,
+		.fragsize = BUFFER_SIZE
 	};
 
-	int error;
-	pa_simple *pulse;
+	switch (pa_context_get_state(ctx)) {
+	case PA_CONTEXT_READY:
+		if (!(pa.stream = pa_stream_new(pa.context, "Input", &ss, NULL)))
+			errpa("failed to create stream");
 
-	pulse = pa_simple_new(
-		NULL, // default server
-		"Vectorscope",
-		PA_STREAM_RECORD,
-		sink,
-		"Input",
-		&sample_specification,
-		NULL, // default channel map
-		&buffer_attributes,
-		&error
-	);
+		pa_stream_set_state_callback(pa.stream, handle_stream_state, NULL);
+		pa_stream_set_read_callback(pa.stream, handle_stream_read, NULL);
 
-	if (!pulse) {
-		warn("failed to open default PulseAudio sink: %s", pa_strerror(error));
-		return NULL;
+		if (pa_stream_connect_record(pa.stream, pa.sink, &ba, PA_STREAM_ADJUST_LATENCY) < 0)
+			errpa("failed to connect input stream");
+
+		break;
+	case PA_CONTEXT_FAILED:
+		errpa("failure in context");
+	default:
+		break;
 	}
+}
 
-	while (run)
-		if (pa_simple_read(pulse, buffer, sizeof(buffer), &error) < 0) {
-			warn("failed to read from PulseAudio sink: %s", pa_strerror(error));
-			pa_simple_free(pulse);
-			return NULL;
+static void
+handle_stream_state(pa_stream *stream, void *userdata UNUSED)
+{
+	if (pa_stream_get_state(stream) == PA_STREAM_FAILED)
+		errpa("failure in input stream");
+}
+
+static void
+handle_stream_read(pa_stream *stream, size_t length, void *userdata UNUSED)
+{
+	static size_t buffer_index = 0;
+
+	const void *data;
+
+	if (pa_stream_peek(stream, &data, &length) < 0)
+		errpa("failed to read fragment");
+
+	if (data)
+		for (size_t i = 0; i < length / 2; i++) {
+			buffer[buffer_index] = ((int16_t *)data)[i];
+
+			buffer_index++;
+
+			if (buffer_index == BUFFER_SIZE)
+				buffer_index = 0;
 		}
 
-	if (pulse)
-		pa_simple_free(pulse);
-
-	return NULL;
+	if (length > 0 && pa_stream_drop(stream))
+		errpa("failed to drop fragment");
 }
