@@ -12,6 +12,7 @@
 // ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
 // OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 
+#define _GNU_SOURCE
 #include <err.h>
 #include <errno.h>
 #include <getopt.h>
@@ -56,7 +57,7 @@ static struct { int x, y, w, h; } geometry = {SDL_WINDOWPOS_UNDEFINED, SDL_WINDO
 static float opacity = 1;
 
 static struct {
-	const char *sink;
+	char *sink;
 	pa_mainloop *mainloop;
 	pa_context *context;
 	pa_stream *stream;
@@ -71,6 +72,7 @@ static void handle_exit(void);
 static void parse_args(int, char **);
 static void init_pulse(void);
 static void handle_context_state(pa_context *, void *);
+static void handle_server_info(pa_context *, const pa_server_info *, void *);
 static void handle_stream_state(pa_stream *, void *);
 static void handle_stream_read(pa_stream *, size_t, void *);
 
@@ -85,11 +87,6 @@ main(int argc, char **argv)
 
 	parse_args(argc, argv);
 	init_pulse();
-
-	if (pa.sink)
-		warnx("using sink %s", pa.sink);
-	else
-		warnx("using default sink");
 
 	if (SDL_Init(SDL_INIT_VIDEO) < 0)
 		errx(EXIT_FAILURE, "failed to initialize SDL: %s", SDL_GetError());
@@ -145,6 +142,8 @@ handle_exit()
 
 	if (pa.mainloop)
 		pa_mainloop_free(pa.mainloop);
+
+	free(pa.sink);
 }
 
 static void
@@ -202,7 +201,8 @@ parse_args(int argc, char **argv)
 
 	optopt = argc - optind;
 	if (optopt == 1) {
-		pa.sink = argv[optind];
+		if (!(pa.sink = strdup(argv[optind])))
+			err(EXIT_FAILURE, "failure in strdup()");
 	} else if (optopt > 0) {
 		warnx("too many arguments");
 		fail = true;
@@ -234,6 +234,22 @@ init_pulse()
 static void
 handle_context_state(pa_context *ctx, void *userdata UNUSED)
 {
+	switch (pa_context_get_state(ctx)) {
+	case PA_CONTEXT_READY:
+		pa_operation_unref(
+			pa_context_get_server_info(ctx, handle_server_info, NULL)
+		);
+		break;
+	case PA_CONTEXT_FAILED:
+		errpa("failure in context");
+	default:
+		break;
+	}
+}
+
+static void
+handle_server_info(pa_context *ctx, const pa_server_info *info UNUSED, void *userdata UNUSED)
+{
 	static const pa_sample_spec ss = {
 		.format = PA_SAMPLE_S16NE,
 		.channels = 2,
@@ -245,23 +261,19 @@ handle_context_state(pa_context *ctx, void *userdata UNUSED)
 		.fragsize = BUFFER_SIZE
 	};
 
-	switch (pa_context_get_state(ctx)) {
-	case PA_CONTEXT_READY:
-		if (!(pa.stream = pa_stream_new(pa.context, "Input", &ss, NULL)))
-			errpa("failed to create stream");
+	if (!pa.sink && asprintf(&pa.sink, "%s.monitor", info->default_sink_name) < 0)
+		err(EXIT_FAILURE, "failure in asprintf()");
 
-		pa_stream_set_state_callback(pa.stream, handle_stream_state, NULL);
-		pa_stream_set_read_callback(pa.stream, handle_stream_read, NULL);
+	warnx("using sink %s", pa.sink);
 
-		if (pa_stream_connect_record(pa.stream, pa.sink, &ba, PA_STREAM_ADJUST_LATENCY) < 0)
-			errpa("failed to connect input stream");
+	if (!(pa.stream = pa_stream_new(ctx, "Input", &ss, NULL)))
+		errpa("failed to create stream");
 
-		break;
-	case PA_CONTEXT_FAILED:
-		errpa("failure in context");
-	default:
-		break;
-	}
+	pa_stream_set_state_callback(pa.stream, handle_stream_state, NULL);
+	pa_stream_set_read_callback(pa.stream, handle_stream_read, NULL);
+
+	if (pa_stream_connect_record(pa.stream, pa.sink, &ba, PA_STREAM_ADJUST_LATENCY) < 0)
+		errpa("failed to connect input stream");
 }
 
 static void
