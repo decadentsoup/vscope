@@ -44,17 +44,25 @@ static const char HELP_NOTICE[] =
 "If no sink is specified, the default sink will be used.\n"
 "\n"
 "Options:\n"
-"  --help      display this help message\n"
-"  --version   display the version of this program\n"
-"  --geometry  set window size to WIDTHxHEIGHT, position to +X+Y, or both to\n"
-"              WIDTHxHEIGHT+X+Y; for negative positions, use - in place of +\n"
-"  --opacity   set window opacity to somewhere from 0.0 to 1.0\n"
+"  --help        display this help message\n"
+"  --version     display the version of this program\n"
+"  --geometry    set window size to WIDTHxHEIGHT, position to +X+Y, or both to\n"
+"                WIDTHxHEIGHT+X+Y; for negative positions, use - in place of +\n"
+"  --opacity     set window opacity to somewhere from 0.0 to 1.0\n"
+"  --foreground  set foreground color (see below); set to rainbow for a variety\n"
+"\n"
+"Colors:\n"
+"  Colors can be specified in hexadecimal red-green-blue format, with or without\n"
+"  a preceding pound sign (#). For example, half-brightness red would be 7F0000.\n"
+"  Colors are case-insensitive.\n"
 "\n"
 "Report bugs to: <https://github.com/decadentsoup/vscope/issues>\n"
 "Vectorscope home page: <https://github.com/decadentsoup/vscope>";
 
 static struct { int x, y, w, h; } geometry = {SDL_WINDOWPOS_UNDEFINED, SDL_WINDOWPOS_UNDEFINED, DEFAULT_WIDTH, DEFAULT_HEIGHT};
 static float opacity = 1;
+static struct { float r, g, b; } color = {1, 1, 1};
+static bool rainbow;
 
 static struct {
 	char *sink;
@@ -70,6 +78,10 @@ static int16_t buffer[BUFFER_SIZE];
 
 static void handle_exit(void);
 static void parse_args(int, char **);
+static bool parse_geometry(void);
+static bool parse_foreground(void);
+static void draw_buffer(void);
+static void set_hue(float);
 static void init_pulse(void);
 static void handle_context_state(pa_context *, void *);
 static void handle_server_info(pa_context *, const pa_server_info *, void *);
@@ -112,10 +124,7 @@ main(int argc, char **argv)
 			last_time = i;
 		}
 
-		glBegin(GL_POINTS);
-		for (i = 0; i < BUFFER_SIZE; i += 2)
-			glVertex2f(buffer[i] / 30000.0, buffer[i + 1] / 30000.0);
-		glEnd();
+		draw_buffer();
 
 		while (SDL_PollEvent(&event))
 			if (event.type == SDL_QUIT)
@@ -154,6 +163,7 @@ parse_args(int argc, char **argv)
 		{"version", no_argument, 0, 0},
 		{"geometry", required_argument, 0, 0},
 		{"opacity", required_argument, 0, 0},
+		{"foreground", required_argument, 0, 0},
 		{0, 0, 0, 0}
 	};
 
@@ -172,18 +182,7 @@ parse_args(int argc, char **argv)
 				puts("Vectorscope " VERSION);
 				exit(0);
 			case 2:
-				if (sscanf(optarg, "%ix%i%i%i", &geometry.w, &geometry.h, &geometry.x, &geometry.y) == 4) {
-					// nothing more to do
-				} else if (sscanf(optarg, "%ix%i", &geometry.w, &geometry.h) == 2) {
-					geometry.x = SDL_WINDOWPOS_UNDEFINED;
-					geometry.y = SDL_WINDOWPOS_UNDEFINED;
-				} else if (sscanf(optarg, "%i%i", &geometry.x, &geometry.y) == 2) {
-					geometry.w = DEFAULT_WIDTH;
-					geometry.h = DEFAULT_HEIGHT;
-				} else {
-					warnx("invalid geometry argument");
-					fail = true;
-				}
+				if (parse_geometry()) fail = true;
 				break;
 			case 3:
 				if (sscanf(optarg, "%f", &opacity) == 1) {
@@ -192,6 +191,9 @@ parse_args(int argc, char **argv)
 					warnx("invalid window opacity");
 					fail = true;
 				}
+				break;
+			case 4:
+				if (parse_foreground()) fail = true;
 				break;
 			}
 		} else if (x == '?') {
@@ -210,6 +212,92 @@ parse_args(int argc, char **argv)
 
 	if (fail)
 		errx(EXIT_FAILURE, "see --help for more information");
+}
+
+static bool
+parse_geometry()
+{
+	if (sscanf(optarg, "%ix%i%i%i", &geometry.w, &geometry.h, &geometry.x, &geometry.y) == 4) {
+		// nothing more to do
+	} else if (sscanf(optarg, "%ix%i", &geometry.w, &geometry.h) == 2) {
+		geometry.x = SDL_WINDOWPOS_UNDEFINED;
+		geometry.y = SDL_WINDOWPOS_UNDEFINED;
+	} else if (sscanf(optarg, "%i%i", &geometry.x, &geometry.y) == 2) {
+		geometry.w = DEFAULT_WIDTH;
+		geometry.h = DEFAULT_HEIGHT;
+	} else {
+		warnx("invalid geometry argument");
+		return true;
+	}
+
+	return false;
+}
+
+static bool
+parse_foreground()
+{
+	unsigned int r, g, b;
+
+	if (!strcmp(optarg, "rainbow")) {
+		rainbow = true;
+	} else if (sscanf(optarg, "%2x%2x%2x", &r, &g, &b) == 3 || sscanf(optarg, "#%2x%2x%2x", &r, &g, &b)) {
+		color.r = r / 255.0;
+		color.g = g / 255.0;
+		color.b = b / 255.0;
+	} else {
+		warnx("invalid color format");
+		return true;
+	}
+
+	return false;
+}
+
+static void
+draw_buffer()
+{
+	float x, y;
+	int i;
+
+	glBegin(GL_POINTS);
+
+	for (i = 0; i < BUFFER_SIZE; i += 2) {
+		x = buffer[i] / 30000.0;
+		y = buffer[i + 1] / 30000.0;
+
+		if (rainbow)
+			set_hue(sqrtf(x * x + y * y) * 360.0);
+		else
+			glColor3f(color.r, color.g, color.b);
+
+		glVertex2f(x, y);
+	}
+
+	glEnd();
+}
+
+static void
+set_hue(float hue)
+{
+	float q, f;
+	long i;
+
+	if (hue >= 360.0)
+		hue = 0;
+
+	hue /= 60.0;
+
+	i = (long)hue;
+	f = hue - i;
+	q = 1.0 - f;
+
+	switch(i) {
+	case 0: glColor3f(1, f, 0); break;
+	case 1: glColor3f(q, 1, 0); break;
+	case 2: glColor3f(0, 1, f); break;
+	case 3: glColor3f(0, q, 1); break;
+	case 4: glColor3f(f, 0, 1); break;
+	case 5: glColor3f(1, 0, q); break;
+	}
 }
 
 static void

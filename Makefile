@@ -23,7 +23,7 @@ vscope.o: vscope.c
 	$(CC) -DVERSION=\"git-`git rev-parse HEAD`\" $(CFLAGS) `pkg-config --cflags libpulse sdl2 gl` -c $< -o $@
 
 vscope: vscope.o
-	$(CC) $(LDFLAGS) `pkg-config --libs libpulse sdl2 gl` $^ -o $@
+	$(CC) $(LDFLAGS) -lm `pkg-config --libs libpulse sdl2 gl` $^ -o $@
 
 install: all
 	mkdir -p $(DESTDIR)$(bindir)
